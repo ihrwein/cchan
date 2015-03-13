@@ -1,59 +1,84 @@
 #![feature(unsafe_destructor)]
 
 use std::thread;
-use std::thread::{Thread, JoinGuard};
-use std::sync::mpsc::channel;
-use std::sync::mpsc::{Sender, SendError, Receiver};
+use std::thread::JoinGuard;
+use std::sync::mpsc::{channel, Sender};
 
-pub struct ChannelWrapper<'a, T: Send + 'a> {
-    pub tx: Sender<Option<T>>,
-    pub handle: JoinGuard<'a, T>
+pub struct ChannelWrapper<'a> {
+    pub tx: Sender<Option<i32>>,
+    pub guard: JoinGuard<'a, ()>
 }
 
-impl<'a, T: Send> ChannelWrapper<'a, T> {
+impl<'a> ChannelWrapper<'a> {
 
-    pub fn send(&self, value: T) -> bool {
+    pub fn new(tx: Sender<Option<i32>>, guard: JoinGuard<'a, ()>) -> ChannelWrapper<'a> {
+        ChannelWrapper{tx: tx, guard: guard}    
+    }
+
+    pub fn send(&self, value: i32) -> bool {
         let res = self.tx.send(Some(value));
 
         match res {
-            Ok(v) => true,
-            Err(e)  => false,
+            Ok(_) => true,
+            Err(_)  => false,
         }
     }
 }
 
 #[unsafe_destructor]
-impl <'a, T: Send> Drop for ChannelWrapper<'a, T> {
+impl <'a> Drop for ChannelWrapper<'a> {
     
     fn drop(&mut self) {
         self.tx.send(Option::None).unwrap();
     }
 }
 
-    
-fn main()
+#[no_mangle]
+pub extern fn channel_wrapper_create<'a>() -> Box<ChannelWrapper<'a>>
 {
+    println!("channel_wrapper_create()");
+
     let (tx, rx) = channel();
-    let consumer = thread::spawn(move|| {
-        println!("thread started");
+    let guard: JoinGuard<()> = thread::scoped(move|| {
+        println!("worker thread: thread started");
+
         for i in rx.iter() {
             match i {
-                Some(v) => println!("{:?}", v),
+                Some(v) => println!("worker thread: received value: {:?}", v),
                 None => {
-                    println!("received no more");
+                    println!("worker thread: received last value");
                     break;
                 }
             };
         }
-        println!("thread finished");
+
+        println!("worker thread: thread finished");
     });
 
-    for i  in 0..10{
-        println!("sending: {:?}", i);
-        tx.send(Option::Some(i)).unwrap();
+    Box::new(ChannelWrapper::new(tx, guard))
+}
+
+#[no_mangle]
+pub extern fn channel_wrapper_send<'a>(this: &ChannelWrapper<'a>, value: i32) -> bool
+{
+    println!("channel_wrapper_send({:?})", value);
+    this.send(value)
+}
+
+#[no_mangle]
+pub extern fn channel_wrapper_free<'a>(_: Box<ChannelWrapper<'a>>)
+{
+    println!("channel_wrapper_free()");
+}
+
+#[allow(dead_code)]
+fn main()
+{
+    let cw = channel_wrapper_create();
+
+    for i in 0..100 {
+        channel_wrapper_send(&*cw, i);
     }
 
-    tx.send(Option::None).unwrap();
-
-    let _ = consumer.join();
+    channel_wrapper_free(cw);
 }
