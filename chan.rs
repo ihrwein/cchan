@@ -29,6 +29,7 @@ impl<'a> ChannelWrapper<'a> {
 impl <'a> Drop for ChannelWrapper<'a> {
     
     fn drop(&mut self) {
+        // by receiving a None, the iteration in the thread will stop
         self.tx.send(Option::None).unwrap();
     }
 }
